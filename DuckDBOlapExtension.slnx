@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DuckDB.ExtensionKit/DuckDB.ExtensionKit.Generators/DuckDB.ExtensionKit.Generators.csproj" />
+  <Project Path="DuckDB.ExtensionKit/DuckDB.ExtensionKit/DuckDB.ExtensionKit.csproj" />
+  <Project Path="DuckDB.OlapExtension.csproj" />
+  <Project Path="tools/DuckDB.OlapExtension.Debug/DuckDB.OlapExtension.Debug.csproj" />
+</Solution>
