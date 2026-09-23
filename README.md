@@ -1,1 +1,204 @@
 # DuckDB.OlapExtension
+A DuckDB extension that connects to Microsoft Analysis Services (SSAS, Azure Analysis Services, Power BI Premium) and executes DAX queries directly from SQL. Written in C#, compiled to a native binary via .NET Native AOT.
+
+> **⚠️ Platform support:** This extension is currently **tested only on
+> Windows**. Linux support is theoretically possible (ADOMD.NET ships
+> .NET Core builds; XMLA over HTTP is a standard protocol) but has not been
+> verified. Sections below describing Linux are provided for reference only.
+
+## Why this extension
+
+DuckDB already has a community extension `msolap`, but it relies on OLEDB —
+a Windows-only COM technology that cannot be ported to Linux and is
+incompatible with .NET Native AOT. This extension takes a different approach:
+
+- **Cross-platform by design.** Uses ADOMD.NET (or, on Linux, XMLA over HTTP)
+  instead of OLEDB.
+- **Single-file native binary.** No .NET Runtime required at runtime.
+- **Dynamic schema.** Result columns are determined at query time from the
+  server's response — same as any SQL table function.
+
+## Features
+
+- **Dynamic column schema.** Columns are extracted from the XMLA response
+  at bind time. A query returning 3 columns produces a 3-column table; a
+  query returning 20 columns produces a 20-column table. No fixed schema.
+- **Automatic type mapping.** XSD types are mapped to .NET types and then to
+  DuckDB types (`xsd:string` → `VARCHAR`, `xsd:int` → `INTEGER`,
+  `xsd:double` → `DOUBLE`, `xsd:dateTime` → `TIMESTAMP`, etc.).
+- **Works in Native AOT.** The extension avoids ADOMD's internal parser
+  (which uses `XmlSerializer` and `Reflection.Emit`, both forbidden in AOT) by
+  using `ExecuteXmlReader()` + a custom `XDocument`-based XMLA parser.
+- **Windows authentication.** Uses the current Windows user's credentials —
+  no passwords stored anywhere.
+- **Diagnostics function.** `olap_test_conn()` verifies that ADOMD works in
+  the current environment.
+
+## Requirements
+
+- **DuckDB** v1.5.5 or later.
+- **Analysis Services instance** — SSAS (on-premises), Azure Analysis Services,
+  or Power BI Premium.
+- **.NET 10 SDK** — to build the extension.
+- **Python 3** — used by the post-publish script that appends metadata to the
+  binary (required for building only, not for running).
+
+## Building
+
+The project uses two Git submodules: `DuckDB.ExtensionKit` and
+`extension-ci-tools`. Clone with `--recurse-submodules`:
+
+```bash
+git clone --recurse-submodules https://github.com/Ximrl/DuckDB.OlapExtension.git
+cd DuckDB.OlapExtension
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then build:
+
+```bash
+dotnet publish DuckDB.OlapExtension.csproj -c Release -r win-x64
+```
+
+> **Note:** Native AOT does **not** support cross-OS compilation. Building for
+> Linux requires a Linux environment (WSL2, Docker, or a native Linux machine).
+
+After a successful build, the output directory contains:
+
+- `olap.duckdb_extension` — the extension itself
+- `msalruntime.dll` — native dependency (Windows only)
+- `msasxpress.dll` — native dependency (Windows only)
+
+## Installation
+
+Because the extension depends on native DLLs that must be found by the
+loader, **do not** use `INSTALL`. Instead:
+
+1. Copy all three files (`olap.duckdb_extension`, `msalruntime.dll`,
+   `msasxpress.dll`) into a single directory.
+2. Launch DuckDB with the `-unsigned` flag (the extension is not signed):
+   ```bash
+   duckdb.exe -unsigned
+   ```
+3. Load the extension by full path:
+   ```sql
+   LOAD 'C:\path\to\olap.duckdb_extension';
+   ```
+
+The native DLLs are looked up in the same directory as the extension.
+
+## Usage
+
+### Table function: `query_olap(connection_string, dax_query)`
+
+Executes a DAX query against an Analysis Services instance and returns the
+result as a DuckDB table with dynamically determined columns.
+
+```sql
+-- Query to OLAP
+SELECT * FROM query_olap(
+    'Data Source=localhost;Initial Catalog=qOLAP;Integrated Security=SSPI;',
+    'EVALUATE VALUES(''DataSources''[Code])'
+);
+```
+
+
+```text
+┌───────────────────┐
+│ DataSources[Code] │
+│      varchar      │
+├───────────────────┤
+│ main              │
+│ ext               │
+│ dev               │
+└───────────────────┘
+```
+
+### Scalar function: `olap_test_conn(connection_string)`
+
+Diagnostic function. Creates an `AdomdConnection` object without opening it.
+Useful for verifying that ADOMD is alive in a Native AOT build.
+
+```sql
+SELECT olap_test_conn('Data Source=dummy;');
+-- → ADOMD OK. Type: Microsoft.AnalysisServices.AdomdClient.AdomdConnection. State: Closed
+```
+
+## Connection strings
+
+**Windows — TCP, Windows authentication:**
+```
+Data Source=localhost;Initial Catalog=qOLAP;Integrated Security=SSPI;
+```
+
+**Linux — HTTP via IIS (`msmdpump.dll`), Basic auth:**
+```
+Data Source=http://server/olap/msmdpump.dll;Initial Catalog=qOLAP;User ID=user;Password=pass;
+```
+
+**Azure Analysis Services:**
+```
+Data Source=https://<region>.asazure.windows.net/servers/<server>/models/<db>;
+```
+
+
+### The AOT problem and its solution
+
+ADOMD.NET's high-level API (`ExecuteReader()`) relies on `XmlSerializer`,
+which generates serialization code at runtime via `Reflection.Emit`. Native
+AOT **forbids** `Reflection.Emit` — the native compiler has no JIT to generate
+new machine code on the fly. This makes `ExecuteReader()` unusable in an AOT
+extension, producing `AdomdUnknownResponseException: The server sent an
+unrecognizable response.`
+
+The workaround is to use the low-level `ExecuteXmlReader()`, which returns
+the raw XML without parsing it. We parse the XML ourselves with
+`System.Xml.Linq` — a fully AOT-compatible API. The format is documented in
+the [XMLA specification](https://learn.microsoft.com/en-us/analysis-services/xmla/).
+
+## Limitations
+
+- **DAX only (for now).** The current parser handles the `rowset` response
+  format used by DAX queries against tabular models. MDX queries against
+  multidimensional cubes (which return `mddataset`) are not yet supported.
+- **External native DLLs.** On Windows, the extension requires
+  `msalruntime.dll` and `msasxpress.dll`, which come from the ADOMD.NET NuGet
+  package. These must be shipped alongside the extension.
+- **No pushdown.** Filters in the outer SQL query are not translated to DAX.
+  All filtering happens after the full result set is returned from the server.
+- **Linux via HTTP only.** TCP connections to Analysis Services are
+  Windows-only. On Linux, an XMLA-over-HTTP endpoint (`msmdpump.dll` in IIS)
+  is required.
+
+## Development
+
+### Debug console
+
+`tools/DuckDB.OlapExtension.Debug/` contains a small console app that uses
+the same `XmlaParser` as the extension. It's the recommended way to debug
+parsing logic — you get a full stack trace and can set breakpoints without
+rebuilding the AOT binary.
+
+```bash
+cd tools/DuckDB.OlapExtension.Debug
+dotnet run
+```
+
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE).
+
+Third-party components:
+
+- DuckDB — MIT
+- DuckDB.ExtensionKit — MIT
+- Microsoft.Identity.Client (MSAL) — MIT
+- **Microsoft.AnalysisServices.AdomdClient — proprietary (Microsoft)**
+
+For details and full license terms, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
