@@ -1,0 +1,186 @@
+name: Release Windows x64
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Release Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Read versions from csproj
+        id: versions
+        shell: pwsh
+        run: |
+          [xml]$csproj = Get-Content DuckDB.OlapExtension.csproj
+
+          $duckdbVersion = ($csproj.Project.PropertyGroup |
+                            ForEach-Object { $_.DuckDBVersion } |
+                            Where-Object { $_ }) | Select-Object -First 1
+          if (-not $duckdbVersion) {
+            Write-Error "DuckDBVersion not found in DuckDB.OlapExtension.csproj"
+            exit 1
+          }
+
+          $extVersion = ($csproj.Project.PropertyGroup |
+                         ForEach-Object { $_.ExtensionVersion } |
+                         Where-Object { $_ }) | Select-Object -First 1
+          if (-not $extVersion) {
+            Write-Error "ExtensionVersion not found in DuckDB.OlapExtension.csproj"
+            exit 1
+          }
+
+          Write-Host "DuckDB version: $duckdbVersion"
+          Write-Host "Extension version: $extVersion"
+          "duckdb=$duckdbVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "extension=$extVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Verify tag matches ExtensionVersion
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $csprojVersion = "${{ steps.versions.outputs.extension }}"
+          if ($tag -ne $csprojVersion) {
+            Write-Error "Tag '$tag' does not match ExtensionVersion '$csprojVersion' in csproj. Update csproj before tagging."
+            exit 1
+          }
+          Write-Host "OK: tag matches ExtensionVersion ($tag)"
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            **/global.json
+
+      - name: Publish (Native AOT, win-x64)
+        run: >
+          dotnet publish DuckDB.OlapExtension.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -o ./publish/win-x64
+
+      - name: Verify MSAL dependencies present
+        shell: pwsh
+        run: |
+          $required = @('msalruntime.dll', 'msasxpress.dll')
+          foreach ($file in $required) {
+            if (-not (Test-Path "./publish/win-x64/$file")) {
+              Write-Error "Missing MSAL dependency: $file"
+              exit 1
+            }
+            Write-Host "OK: $file"
+          }
+
+      - name: Download DuckDB CLI
+        shell: pwsh
+        run: |
+          $version = "${{ steps.versions.outputs.duckdb }}"
+          $url = "https://github.com/duckdb/duckdb/releases/download/$version/duckdb_cli-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile duckdb.zip
+          Expand-Archive -Path duckdb.zip -DestinationPath ./publish/win-x64 -Force
+          ./publish/win-x64/duckdb.exe --version
+
+      - name: Smoke test - extension loads
+        shell: pwsh
+        working-directory: ./publish/win-x64
+        run: |
+          $output = ./duckdb.exe -unsigned -csv -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch 'olap,true') {
+            Write-Error "Extension did not load into DuckDB"
+            exit 1
+          }
+
+      - name: Smoke test - ADOMD works inside AOT
+        shell: pwsh
+        working-directory: ./publish/win-x64
+        run: |
+          $conn = "Data Source=dummy"
+          $query = "LOAD 'olap.duckdb_extension'; SELECT olap_test_conn('$conn') AS result;"
+          $output = ./duckdb.exe -unsigned -csv -c $query 2>&1 | Out-String
+          Write-Host $output
+
+          if ($output -notmatch 'ADOMD OK') {
+            Write-Error "Expected 'ADOMD OK' but got something else"
+            exit 1
+          }
+
+          $fatal = 'DllNotFoundException|TypeInitializationException|MissingMethodException|EntryPointNotFoundException'
+          if ($output -match $fatal) {
+            Write-Error "AOT or native dependency issue detected"
+            exit 1
+          }
+
+          Write-Host "OK: ADOMD loaded and executed inside AOT binary"
+
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ./release | Out-Null
+          Copy-Item ./publish/win-x64/olap.duckdb_extension ./release/
+          Copy-Item ./publish/win-x64/DuckDB.OlapExtension.dll ./release/
+          Copy-Item ./publish/win-x64/msalruntime.dll ./release/
+          Copy-Item ./publish/win-x64/msasxpress.dll ./release/
+          Get-ChildItem ./release
+
+      - name: Create release package (ZIP)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path ./release/* -DestinationPath ./olap-windows-x64.zip
+          Get-Item ./olap-windows-x64.zip | Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: ./olap-windows-x64.zip
+          body: |
+            ## DuckDB OLAP Extension ${{ github.ref_name }}
+
+            ### Build info
+            - **Extension version:** ${{ steps.versions.outputs.extension }}
+            - **DuckDB version:** ${{ steps.versions.outputs.duckdb }}
+            - **Platform:** Windows x64
+
+            ### What's inside
+
+            Download `olap-windows-x64.zip` and extract it. The archive contains:
+            - `olap.duckdb_extension` — main extension binary
+            - `DuckDB.OlapExtension.dll` — managed assembly
+            - `msalruntime.dll` — MSAL native dependency
+            - `msasxpress.dll` — MSAL compression dependency
+
+            ### Installation
+
+            Extract the archive and load the extension in DuckDB:
+
+            ```sql
+            LOAD 'path/to/olap.duckdb_extension';
+            ```
+
+            See [README](https://github.com/${{ github.repository }}#readme) for usage details.
+
+            ### Requirements
+
+            - **OS:** Windows 10 build 1904x.5007 or later (x64)
+            - **DuckDB:** ${{ steps.versions.outputs.duckdb }}
+            - **.NET Runtime:** not required (self-contained AOT binary)
