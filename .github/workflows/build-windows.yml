@@ -28,7 +28,7 @@ jobs:
 
       - name: Publish (Native AOT, win-x64)
         run: >
-          dotnet publish
+          dotnet publish DuckDB.OlapExtension.csproj
           -c Release
           -r win-x64
           --self-contained true
