@@ -55,6 +55,18 @@ jobs:
         run: |
           Get-ChildItem ./publish/win-x64 | Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
 
+      - name: Verify MSAL dependencies present
+        shell: pwsh
+        run: |
+          $required = @('msalruntime.dll', 'msasxpress.dll')
+          foreach ($file in $required) {
+            if (-not (Test-Path "./publish/win-x64/$file")) {
+              Write-Error "Missing MSAL dependency: $file"
+              exit 1
+            }
+            Write-Host "OK: $file"
+          }
+
       - name: Download DuckDB CLI
         shell: pwsh
         run: |

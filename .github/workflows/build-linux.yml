@@ -56,6 +56,16 @@ jobs:
           Get-ChildItem ./publish/linux-x64 |
             Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
 
+      - name: Check shared library dependencies
+        shell: pwsh
+        working-directory: ./publish/linux-x64
+        run: |
+          Write-Host "=== ldd olap.duckdb_extension ==="
+          ldd ./olap.duckdb_extension || true
+          Write-Host ""
+          Write-Host "=== Files in directory ==="
+          Get-ChildItem
+
       - name: Download DuckDB CLI
         shell: pwsh
         run: |
@@ -71,6 +81,7 @@ jobs:
         shell: pwsh
         working-directory: ./publish/linux-x64
         run: |
+          $env:LD_LIBRARY_PATH = "$PWD:$env:LD_LIBRARY_PATH"
           $output = ./duckdb -unsigned -csv -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
           Write-Host $output
           if ($output -notmatch 'olap,true') {
@@ -82,6 +93,7 @@ jobs:
         shell: pwsh
         working-directory: ./publish/linux-x64
         run: |
+          $env:LD_LIBRARY_PATH = "$PWD:$env:LD_LIBRARY_PATH"
           $conn = "Data Source=dummy"
           $query = "LOAD 'olap.duckdb_extension'; SELECT olap_test_conn('$conn') AS result;"
           $output = ./duckdb -unsigned -csv -c $query 2>&1 | Out-String
