@@ -68,9 +68,9 @@ jobs:
         shell: pwsh
         working-directory: ./publish/win-x64
         run: |
-          $output = ./duckdb.exe -unsigned -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
+          $output = ./duckdb.exe -unsigned -csv -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
           Write-Host $output
-          if ($output -notmatch 'olap\s*\|\s*true') {
+          if ($output -notmatch 'olap,true') {
             Write-Error "Extension did not load into DuckDB"
             exit 1
           }
@@ -81,7 +81,7 @@ jobs:
         run: |
           $conn = "Data Source=dummy"
           $query = "LOAD 'olap.duckdb_extension'; SELECT olap_test_conn('$conn') AS result;"
-          $output = ./duckdb.exe -unsigned -c $query 2>&1 | Out-String
+          $output = ./duckdb.exe -unsigned -csv -c $query 2>&1 | Out-String
           Write-Host $output
 
           if ($output -notmatch 'ADOMD FAILED') {
