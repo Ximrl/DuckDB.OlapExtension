@@ -1,4 +1,10 @@
 # DuckDB.OlapExtension
+
+[![Release](https://img.shields.io/github/v/release/Ximrl/DuckDB.OlapExtension?sort=semver)](https://github.com/Ximrl/DuckDB.OlapExtension/releases/latest)
+[![Build](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-blue.svg)](#platform-support)
+
 A DuckDB extension that connects to Microsoft Analysis Services (SSAS, Azure Analysis Services, Power BI Premium) and executes DAX queries directly from SQL. Written in C#, compiled to a native binary via .NET Native AOT.
 
 > **⚠️ Platform support:** This extension is currently **tested only on
@@ -18,6 +24,23 @@ incompatible with .NET Native AOT. This extension takes a different approach:
 - **Dynamic schema.** Result columns are determined at query time from the
   server's response — same as any SQL table function.
 
+## Download
+
+Grab the latest release for Windows x64:
+
+**[⬇️ Download latest release](https://github.com/Ximrl/DuckDB.OlapExtension/releases/latest)**
+
+Each release contains a single ZIP archive:
+
+- `olap.duckdb_extension` — the extension binary
+- `DuckDB.OlapExtension.dll` — managed assembly
+- `msalruntime.dll` — MSAL native dependency
+- `msasxpress.dll` — MSAL compression dependency
+
+Extract the archive into a folder of your choice, then jump to [Installation](#installation).
+
+> Building from source? See [Building](#building).
+
 ## Features
 
 - **Dynamic column schema.** Columns are extracted from the XMLA response
@@ -36,12 +59,23 @@ incompatible with .NET Native AOT. This extension takes a different approach:
 
 ## Requirements
 
+### To use a prebuilt release
+
 - **DuckDB** v1.5.5 or later.
 - **Analysis Services instance** — SSAS (on-premises), Azure Analysis Services,
   or Power BI Premium.
-- **.NET 10 SDK** — to build the extension.
+- **Windows 10 build 1904x.5007 or later** (x64).
+
+No .NET Runtime required — the extension is a self-contained native binary.
+
+### To build from source
+
+In addition to the above:
+
+- **.NET 10 SDK** — required to build the extension.
 - **Python 3** — used by the post-publish script that appends metadata to the
-  binary (required for building only, not for running).
+  binary (build-time only).
+- **Visual Studio Build Tools** with C++ workload — required by Native AOT.
 
 ## Building
 
@@ -79,18 +113,27 @@ After a successful build, the output directory contains:
 Because the extension depends on native DLLs that must be found by the
 loader, **do not** use `INSTALL`. Instead:
 
-1. Copy all three files (`olap.duckdb_extension`, `msalruntime.dll`,
-   `msasxpress.dll`) into a single directory.
+1. Extract the release archive (or build from source) into a single directory.
+   It should contain at least these four files:
+
+       olap.duckdb_extension
+       DuckDB.OlapExtension.dll
+       msalruntime.dll
+       msasxpress.dll
+
 2. Launch DuckDB with the `-unsigned` flag (the extension is not signed):
-   ```bash
-   duckdb.exe -unsigned
-   ```
+
+       duckdb.exe -unsigned
+
 3. Load the extension by full path:
-   ```sql
-   LOAD 'C:\path\to\olap.duckdb_extension';
-   ```
+
+       LOAD 'C:\path\to\olap.duckdb_extension';
 
 The native DLLs are looked up in the same directory as the extension.
+
+> **Tip:** For quick verification, run `SELECT olap_test_conn('Data Source=dummy;');`
+> after loading. If it returns `ADOMD OK`, the extension and its native
+> dependencies are correctly deployed.
 
 ## Usage
 
