@@ -32,7 +32,6 @@ jobs:
           -c Release
           -r win-x64
           --self-contained true
-          -p:PublishAot=true
           -o ./publish/win-x64
 
       - name: List published files

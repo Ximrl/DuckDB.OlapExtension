@@ -57,7 +57,7 @@
 
   <ItemGroup>
     <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit\DuckDB.ExtensionKit.csproj" />
-    <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit.Generators\DuckDB.ExtensionKit.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot" TreatAsLocalProperty="PublishAot"/>
+    <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit.Generators\DuckDB.ExtensionKit.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false"/>
   </ItemGroup>
 
   <Target Name="PackageExtension" AfterTargets="Publish" Condition="'$(PublishAot)' == 'true'">
