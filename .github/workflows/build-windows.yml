@@ -18,6 +18,21 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Read DuckDB version from csproj
+        id: duckdb_version
+        shell: pwsh
+        run: |
+          [xml]$csproj = Get-Content DuckDB.OlapExtension.csproj
+          $version = ($csproj.Project.PropertyGroup |
+                      ForEach-Object { $_.DuckDBVersion } |
+                      Where-Object { $_ }) | Select-Object -First 1
+          if (-not $version) {
+            Write-Error "DuckDBVersion not found in DuckDB.OlapExtension.csproj"
+            exit 1
+          }
+          Write-Host "DuckDB version: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v6
         with:
@@ -38,9 +53,49 @@ jobs:
       - name: List published files
         shell: pwsh
         run: |
-          Get-ChildItem ./publish/win-x64 -Recurse | ForEach-Object {
-            "{0,10:N2} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Replace((Get-Location).Path, '.')
+          Get-ChildItem ./publish/win-x64 | Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
+
+      - name: Download DuckDB CLI
+        shell: pwsh
+        run: |
+          $version = "${{ steps.duckdb_version.outputs.version }}"
+          $url = "https://github.com/duckdb/duckdb/releases/download/$version/duckdb_cli-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile duckdb.zip
+          Expand-Archive -Path duckdb.zip -DestinationPath ./publish/win-x64 -Force
+          ./publish/win-x64/duckdb.exe --version
+
+      - name: Smoke test - extension loads
+        shell: pwsh
+        working-directory: ./publish/win-x64
+        run: |
+          $output = ./duckdb.exe -unsigned -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch 'olap\s*\|\s*true') {
+            Write-Error "Extension did not load into DuckDB"
+            exit 1
           }
+
+      - name: Smoke test - ADOMD works inside AOT
+        shell: pwsh
+        working-directory: ./publish/win-x64
+        run: |
+          $conn = "Data Source=dummy"
+          $query = "LOAD 'olap.duckdb_extension'; SELECT olap_test_conn('$conn') AS result;"
+          $output = ./duckdb.exe -unsigned -c $query 2>&1 | Out-String
+          Write-Host $output
+
+          if ($output -notmatch 'ADOMD FAILED') {
+            Write-Error "Expected 'ADOMD FAILED' but got something else. ADOMD may not have been exercised."
+            exit 1
+          }
+
+          $fatal = 'DllNotFoundException|TypeInitializationException|MissingMethodException|EntryPointNotFoundException'
+          if ($output -match $fatal) {
+            Write-Error "AOT or native dependency issue detected"
+            exit 1
+          }
+
+          Write-Host "OK: ADOMD loaded and executed inside AOT binary"
 
       - name: Upload binaries
         uses: actions/upload-artifact@v7
