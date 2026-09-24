@@ -84,8 +84,8 @@ jobs:
           $output = ./duckdb.exe -unsigned -csv -c $query 2>&1 | Out-String
           Write-Host $output
 
-          if ($output -notmatch 'ADOMD FAILED') {
-            Write-Error "Expected 'ADOMD FAILED' but got something else. ADOMD may not have been exercised."
+          if ($output -notmatch 'ADOMD OK') {
+            Write-Error "Expected 'ADOMD OK' but got something else. ADOMD may not have loaded correctly."
             exit 1
           }
 
