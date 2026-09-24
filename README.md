@@ -1,16 +1,21 @@
 # DuckDB.OlapExtension
 
 [![Release](https://img.shields.io/github/v/release/Ximrl/DuckDB.OlapExtension?sort=semver)](https://github.com/Ximrl/DuckDB.OlapExtension/releases/latest)
-[![Build](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml)
+[![Build Windows](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml)
+[![Build Linux](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-blue.svg)](#platform-support)
+[![Platform: Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](#platform-support)
 
 A DuckDB extension that connects to Microsoft Analysis Services (SSAS, Azure Analysis Services, Power BI Premium) and executes DAX queries directly from SQL. Written in C#, compiled to a native binary via .NET Native AOT.
 
-> **⚠️ Platform support:** This extension is currently **tested only on
-> Windows**. Linux support is theoretically possible (ADOMD.NET ships
-> .NET Core builds; XMLA over HTTP is a standard protocol) but has not been
-> verified. Sections below describing Linux are provided for reference only.
+> **⚠️ Platform support:**
+> - **Windows** — fully tested, including real SSAS connections.
+> - **Linux** — builds successfully and passes CI smoke tests (Native AOT
+>   + ADOMD initialization), but **has not been tested against a real SSAS
+>   instance**. Linux support relies on ADOMD.NET's .NET Core build and
+>   XMLA-over-HTTP (`msmdpump.dll` in IIS); both are theoretically compatible
+>   but not verified end-to-end. If you try it and it doesn't work, please
+>   open an issue.
 
 ## Why this extension
 
@@ -30,7 +35,11 @@ Grab the latest release for Windows x64:
 
 **[⬇️ Download latest release](https://github.com/Ximrl/DuckDB.OlapExtension/releases/latest)**
 
-Each release contains a single ZIP archive:
+> **Linux users:** prebuilt Linux releases are not yet published. You can
+> [build from source](#building) in the meantime. A Linux release will be
+> added once it has been verified against a real SSAS instance.
+
+Each release contains a single ZIP archive (Windows):
 
 - `olap.duckdb_extension` — the extension binary
 - `DuckDB.OlapExtension.dll` — managed assembly
@@ -52,8 +61,11 @@ Extract the archive into a folder of your choice, then jump to [Installation](#i
 - **Works in Native AOT.** The extension avoids ADOMD's internal parser
   (which uses `XmlSerializer` and `Reflection.Emit`, both forbidden in AOT) by
   using `ExecuteXmlReader()` + a custom `XDocument`-based XMLA parser.
-- **Windows authentication.** Uses the current Windows user's credentials —
-  no passwords stored anywhere.
+- **Authentication:**
+  - **Windows** — current Windows user's credentials via SSPI (Windows Authentication). No passwords
+    stored anywhere. Fully tested.
+  - **Linux** — XMLA-over-HTTP with either Kerberos (`Negotiate`) or Basic
+    auth. See [Connection strings](#connection-strings).
 - **Diagnostics function.** `olap_test_conn()` verifies that ADOMD works in
   the current environment.
 
@@ -64,9 +76,12 @@ Extract the archive into a folder of your choice, then jump to [Installation](#i
 - **DuckDB** v1.5.5 or later.
 - **Analysis Services instance** — SSAS (on-premises), Azure Analysis Services,
   or Power BI Premium.
+
+Prebuilt releases are currently **Windows only**:
+
 - **Windows 10 build 1904x.5007 or later** (x64).
 
-No .NET Runtime required — the extension is a self-contained native binary.
+Linux users: build from source until a verified Linux release is published.
 
 ### To build from source
 
@@ -75,7 +90,13 @@ In addition to the above:
 - **.NET 10 SDK** — required to build the extension.
 - **Python 3** — used by the post-publish script that appends metadata to the
   binary (build-time only).
-- **Visual Studio Build Tools** with C++ workload — required by Native AOT.
+
+Platform-specific Native AOT toolchain:
+
+- **Windows:** Visual Studio Build Tools with the C++ workload.
+- **Linux:** `clang` and `zlib1g-dev` (both preinstalled on GitHub-hosted
+  `ubuntu-24.04` runners; on a fresh system, install with
+  `apt-get install clang zlib1g-dev`).
 
 ## Building
 
@@ -93,10 +114,16 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
-Then build:
+Then build for your platform:
 
+Windows:
 ```bash
 dotnet publish DuckDB.OlapExtension.csproj -c Release -r win-x64
+```
+
+Linux:
+```bash
+dotnet publish DuckDB.OlapExtension.csproj -c Release -r linux-x64
 ```
 
 > **Note:** Native AOT does **not** support cross-OS compilation. Building for
@@ -104,9 +131,20 @@ dotnet publish DuckDB.OlapExtension.csproj -c Release -r win-x64
 
 After a successful build, the output directory contains:
 
+On Windows:
 - `olap.duckdb_extension` — the extension itself
-- `msalruntime.dll` — native dependency (Windows only)
-- `msasxpress.dll` — native dependency (Windows only)
+- `msalruntime.dll` — MSAL native dependency
+- `msasxpress.dll` — MSAL compression dependency
+
+On Linux:
+- `olap.duckdb_extension` — the extension itself (`.so` under the hood)
+- `DuckDB.OlapExtension.so` — raw native library
+- `libmsalruntime.so` — MSAL native dependency
+
+> **Note for Linux:** the dynamic linker does not search the current
+> directory by default. When loading the extension, either set
+> `LD_LIBRARY_PATH` to the folder containing the extension, or install
+> `libmsalruntime.so` system-wide (`/usr/local/lib` + `ldconfig`).
 
 ## Installation
 
@@ -176,12 +214,17 @@ SELECT olap_test_conn('Data Source=dummy;');
 
 **Windows — TCP, Windows authentication:**
 ```
-Data Source=localhost;Initial Catalog=qOLAP;Integrated Security=SSPI;
+Data Source=localhost;Initial Catalog=OLAP;Integrated Security=SSPI;
 ```
 
 **Linux — HTTP via IIS (`msmdpump.dll`), Basic auth:**
 ```
-Data Source=http://server/olap/msmdpump.dll;Initial Catalog=qOLAP;User ID=user;Password=pass;
+Data Source=http://server/olap/msmdpump.dll;Initial Catalog=OLAP;User ID=user;Password=pass;
+```
+
+**Linux — HTTP via IIS (`msmdpump.dll`), Kerberos:**
+```
+Data Source=http://server/olap/msmdpump.dll;Initial Catalog=OLAP;Integrated Security=Negotiate;
 ```
 
 **Azure Analysis Services:**
