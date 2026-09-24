@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishAot>true</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>
-	<InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization>true</InvariantGlobalization>
     <VerifyReferenceAotCompatibility>true</VerifyReferenceAotCompatibility>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
   </PropertyGroup>
@@ -22,7 +22,7 @@
   <PropertyGroup Condition="'$(UseUnstableApi)' == 'true'">
     <DuckDBVersion>v1.5.5</DuckDBVersion>
     <AbiType>C_STRUCT_UNSTABLE</AbiType>
-	<NoWarn>$(NoWarn);DUCKDBExtensionKit001</NoWarn>
+    <NoWarn>$(NoWarn);DUCKDBExtensionKit001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -35,17 +35,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-	<!-- Исключаем submodule и его содержимое из компиляции основного проекта -->
-	<Compile Remove="DuckDB.ExtensionKit\**" />
-	<None Remove="DuckDB.ExtensionKit\**" />
-	<EmbeddedResource Remove="DuckDB.ExtensionKit\**" />
-	<Compile Remove="extension-ci-tools\**" />
-	<None Remove="extension-ci-tools\**" />
-	<Compile Remove="tools\**" />
-	<None Remove="tools\**" />
-	<EmbeddedResource Remove="tools\**" />
+    <!-- Исключаем submodule и его содержимое из компиляции основного проекта -->
+    <Compile Remove="DuckDB.ExtensionKit\**" />
+    <None Remove="DuckDB.ExtensionKit\**" />
+    <EmbeddedResource Remove="DuckDB.ExtensionKit\**" />
+    <Compile Remove="extension-ci-tools\**" />
+    <None Remove="extension-ci-tools\**" />
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
   </ItemGroup>
-	
+
   <ItemGroup>
     <CompilerVisibleProperty Include="ExtensionName" />
     <CompilerVisibleProperty Include="DuckDBVersion" />
@@ -57,7 +57,7 @@
 
   <ItemGroup>
     <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit\DuckDB.ExtensionKit.csproj" />
-    <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit.Generators\DuckDB.ExtensionKit.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="DuckDB.ExtensionKit\DuckDB.ExtensionKit.Generators\DuckDB.ExtensionKit.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot" TreatAsLocalProperty="PublishAot"/>
   </ItemGroup>
 
   <Target Name="PackageExtension" AfterTargets="Publish" Condition="'$(PublishAot)' == 'true'">
