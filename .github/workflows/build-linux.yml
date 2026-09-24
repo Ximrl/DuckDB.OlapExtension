@@ -1,16 +1,16 @@
-name: Build Windows x64 (.NET 10)
+name: Build Linux x64 (.NET 10)
 
 on:
   push:
-    branches: [ main, master, ci/windows-build ]
+    branches: [ main, master, ci/linux-build ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    name: Build Windows x64
-    runs-on: windows-2025
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository with submodules
@@ -42,25 +42,27 @@ jobs:
             **/*.csproj
             **/global.json
 
-      - name: Publish (Native AOT, win-x64)
+      - name: Publish (Native AOT, linux-x64)
         run: >
           dotnet publish DuckDB.OlapExtension.csproj
           -c Release
-          -r win-x64
+          -r linux-x64
           --self-contained true
-          -o ./publish/win-x64
+          -o ./publish/linux-x64
 
       - name: List published files
         shell: pwsh
         run: |
-          Get-ChildItem ./publish/win-x64 | Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
+          Get-ChildItem ./publish/linux-x64 |
+            Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
 
       - name: Verify MSAL dependencies present
         shell: pwsh
+        working-directory: ./publish/linux-x64
         run: |
-          $required = @('msalruntime.dll', 'msasxpress.dll')
+          $required = @('libmsalruntime.so')
           foreach ($file in $required) {
-            if (-not (Test-Path "./publish/win-x64/$file")) {
+            if (-not (Test-Path "./$file")) {
               Write-Error "Missing MSAL dependency: $file"
               exit 1
             }
@@ -71,16 +73,19 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.duckdb_version.outputs.version }}"
-          $url = "https://github.com/duckdb/duckdb/releases/download/$version/duckdb_cli-windows-amd64.zip"
+          $url = "https://github.com/duckdb/duckdb/releases/download/$version/duckdb_cli-linux-amd64.zip"
+          Write-Host "Downloading DuckDB CLI $version from $url"
           Invoke-WebRequest -Uri $url -OutFile duckdb.zip
-          Expand-Archive -Path duckdb.zip -DestinationPath ./publish/win-x64 -Force
-          ./publish/win-x64/duckdb.exe --version
+          Expand-Archive -Path duckdb.zip -DestinationPath ./publish/linux-x64 -Force
+          chmod +x ./publish/linux-x64/duckdb
+          ./publish/linux-x64/duckdb --version
 
       - name: Smoke test - extension loads
         shell: pwsh
-        working-directory: ./publish/win-x64
+        working-directory: ./publish/linux-x64
         run: |
-          $output = ./duckdb.exe -unsigned -csv -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
+          $env:LD_LIBRARY_PATH = "$($PWD.Path):$($env:LD_LIBRARY_PATH)"
+          $output = ./duckdb -unsigned -csv -c "LOAD 'olap.duckdb_extension'; SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'olap';" 2>&1 | Out-String
           Write-Host $output
           if ($output -notmatch 'olap,true') {
             Write-Error "Extension did not load into DuckDB"
@@ -89,15 +94,16 @@ jobs:
 
       - name: Smoke test - ADOMD works inside AOT
         shell: pwsh
-        working-directory: ./publish/win-x64
+        working-directory: ./publish/linux-x64
         run: |
+          $env:LD_LIBRARY_PATH = "$($PWD.Path):$($env:LD_LIBRARY_PATH)"
           $conn = "Data Source=dummy"
           $query = "LOAD 'olap.duckdb_extension'; SELECT olap_test_conn('$conn') AS result;"
-          $output = ./duckdb.exe -unsigned -csv -c $query 2>&1 | Out-String
+          $output = ./duckdb -unsigned -csv -c $query 2>&1 | Out-String
           Write-Host $output
 
           if ($output -notmatch 'ADOMD OK') {
-            Write-Error "Expected 'ADOMD OK' but got something else. ADOMD may not have loaded correctly."
+            Write-Error "Expected 'ADOMD OK' but got: $output"
             exit 1
           }
 
@@ -109,12 +115,12 @@ jobs:
 
           Write-Host "OK: ADOMD loaded and executed inside AOT binary"
 
-      - name: Upload binaries
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: olap-extension-windows-x64
+          name: olap-extension-linux-x64
           path: |
-            ./publish/win-x64/*.duckdb_extension
-            ./publish/win-x64/*.dll
+            ./publish/linux-x64/*.duckdb_extension
+            ./publish/linux-x64/*.so
           if-no-files-found: error
           retention-days: 14
