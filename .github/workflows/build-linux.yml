@@ -56,27 +56,13 @@ jobs:
           Get-ChildItem ./publish/linux-x64 |
             Select-Object Name, @{Name='Size (MB)'; Expression={[math]::Round($_.Length / 1MB, 2)}}
 
-      - name: Patch RPATH and re-append metadata
-        shell: pwsh
+      - name: Patch RPATH to find native deps
+        shell: bash
         working-directory: ./publish/linux-x64
         run: |
-          # Patch RPATH on the raw .so (before metadata trailer)
-          patchelf --set-rpath '$ORIGIN' DuckDB.OlapExtension.so
-          Write-Host "RPATH: $(patchelf --print-rpath DuckDB.OlapExtension.so)"
-
-          # Re-run metadata appender to produce a valid .duckdb_extension
-          # from the patched .so. Values must match DuckDB.OlapExtension.csproj.
-          $scriptPath = "../../extension-ci-tools/scripts/append_extension_metadata.py"
-          python $scriptPath `
-            -l DuckDB.OlapExtension.so `
-            -o olap.duckdb_extension `
-            -n olap `
-            -p linux_amd64 `
-            -dv v1.5.5 `
-            -ev v1.0.1 `
-            --abi-type C_STRUCT_UNSTABLE
-
-          Write-Host "Metadata re-appended."
+          sudo apt-get install -y patchelf
+          patchelf --set-rpath '$ORIGIN' olap.duckdb_extension
+          patchelf --print-rpath olap.duckdb_extension
 
       - name: Verify MSAL dependencies present
         shell: pwsh
