@@ -10,26 +10,15 @@ using DuckDB.ExtensionKit.TableFunctions;
 public static partial class XmlaParser
 {
     // Стандартные XML namespace, определённые W3C и Microsoft.
-    // Значения фиксированы спецификациями и не могут меняться между серверами.
     private static readonly XNamespace XsdNamespace = "http://www.w3.org/2001/XMLSchema";
+    private static readonly XNamespace XsiNamespace = "http://www.w3.org/2001/XMLSchema-instance";
     private static readonly XNamespace SqlNamespace = "urn:schemas-microsoft-com:xml-sql";
 
-    /// <summary>
-    /// Source-generated regex для декодирования экранированных XML-имён.
-    /// В Native AOT RegexOptions.Compiled игнорируется ->
-    /// используется генератор, который создаёт оптимизированный код на этапе компиляции.
-    /// </summary>
     [GeneratedRegex(@"_x([0-9A-Fa-f]{4})_")]
     private static partial Regex XmlEncodedNameRegex();
 
     public record TableData(IReadOnlyList<ColumnInfo> Columns, IReadOnlyList<object?[]> Rows);
 
-    /// <summary>
-    /// Разбирает XMLA-ответ формата "rowset" (DAX к табличным моделям).
-    /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// Если ответ пустой, не содержит namespace "rowset" или схему колонок.
-    /// </exception>
     public static TableData ParseRowset(XDocument doc)
     {
         var root = doc.Root
@@ -42,23 +31,25 @@ public static partial class XmlaParser
                 $"Unsupported XMLA response format: {rootNs.NamespaceName}. " +
                 "Only 'rowset' (DAX) is supported by this function.");
 
-        var columns = ExtractColumns(root);
+        var (columns, xmlNames) = ExtractColumns(root);
         if (columns.Count == 0)
             throw new InvalidOperationException(
                 "XMLA response contains no column definitions. " +
                 "The schema section is missing or malformed.");
 
-        var rows = ExtractRows(root, rootNs, columns);
+        var rows = ExtractRows(root, rootNs, columns, xmlNames);
         return new TableData(columns, rows);
     }
 
-    private static List<ColumnInfo> ExtractColumns(XElement root)
+    private static (List<ColumnInfo> Columns, string[] XmlNames) ExtractColumns(XElement root)
     {
         var columns = new List<ColumnInfo>();
+        var xmlNames = new List<string>();
+
         var rowType = root.Descendants(XsdNamespace + "complexType")
             .FirstOrDefault(ct => ct.Attribute("name")?.Value == "row");
 
-        if (rowType == null) return columns;
+        if (rowType == null) return (columns, xmlNames.ToArray());
 
         foreach (var element in rowType.Descendants(XsdNamespace + "element"))
         {
@@ -69,42 +60,44 @@ public static partial class XmlaParser
             columns.Add(new ColumnInfo(
                 sqlField ?? DecodeXmlName(elemName),
                 MapXsdType(xsdType)));
+            xmlNames.Add(elemName);
         }
 
-        return columns;
+        return (columns, xmlNames.ToArray());
     }
 
     private static List<object?[]> ExtractRows(
         XElement root,
         XNamespace rootNs,
-        IReadOnlyList<ColumnInfo> columns)
+        IReadOnlyList<ColumnInfo> columns,
+        string[] xmlNames)
     {
+        var nameToIndex = new Dictionary<string, int>(columns.Count, StringComparer.Ordinal);
+        for (int i = 0; i < columns.Count; i++)
+            nameToIndex[xmlNames[i]] = i;
+
         var rows = new List<object?[]>();
 
         foreach (var rowElem in root.Elements(rootNs + "row"))
         {
+            // По умолчанию для всех столбцов, включая отсутствующие, устанавливается значение null.
             var row = new object?[columns.Count];
-            int colIdx = 0;
 
             foreach (var cell in rowElem.Elements())
             {
-                if (colIdx >= columns.Count) break;
-                row[colIdx] = ConvertValue(cell.Value, columns[colIdx].Type);
-                colIdx++;
+                if (!nameToIndex.TryGetValue(cell.Name.LocalName, out var idx))
+                    // Unknown element — skip.
+                    continue;
+
+                row[idx] = ConvertValue(cell, columns[idx]);
             }
 
-            // Недостающие ячейки (если сервер вернул их меньше, чем колонок)
-            // остаются null. DuckDB воспримет это как NULL.
             rows.Add(row);
         }
 
         return rows;
     }
 
-    /// <summary>
-    /// Отображает XSD-тип в .NET-тип. Отрезает namespace-префикс,
-    /// чтобы корректно обрабатывать варианты "xsd:string", "xs:string", "string".
-    /// </summary>
     private static Type MapXsdType(string xsdType)
     {
         var local = xsdType.Contains(':')
@@ -128,13 +121,10 @@ public static partial class XmlaParser
             "double" or "float" => typeof(double),
             "decimal" => typeof(decimal),
 
-            // DateTimeOffset сохраняет информацию о часовом поясе,
-            // которую DateTime теряет (например, "2024-01-15T10:30:00+05:00").
-            "dateTime" => typeof(DateTimeOffset),
+            "dateTime" => typeof(DateTime),
             "date" => typeof(DateOnly),
             "time" => typeof(TimeOnly),
 
-            // Прочие XSD-типы приводим к строке, чтобы не терять данные.
             "anyURI" or "QName" or "duration" or "base64Binary" or "hexBinary"
                 or "gYear" or "gYearMonth" or "gMonth" or "gMonthDay" or "gDay"
                 => typeof(string),
@@ -143,9 +133,21 @@ public static partial class XmlaParser
         };
     }
 
-    private static object? ConvertValue(string raw, Type type)
+    private static object? ConvertValue(XElement cell, ColumnInfo column)
     {
-        if (string.IsNullOrEmpty(raw)) return null;
+        var type = column.Type;
+
+        // Explicit xsi:nil="true" → NULL.
+        var nilAttr = cell.Attribute(XsiNamespace + "nil");
+        if (nilAttr?.Value == "true") return null;
+
+        var raw = cell.Value;
+
+        // Empty content: for string it's "", for everything else → NULL.
+        // Distinguishes <A/> from <A xsi:nil="true"/> and from <A>value</A>.
+        if (raw.Length == 0)
+            return type == typeof(string) ? "" : null;
+
         if (type == typeof(string)) return raw;
 
         // Целые типы со знаком и без.
@@ -198,11 +200,22 @@ public static partial class XmlaParser
             if (raw == "0") return false;
         }
 
-        // Даты и время.
-        if (type == typeof(DateTimeOffset)
-            && DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
-                                       DateTimeStyles.None, out var dtoVal))
-            return dtoVal;
+        // Date/time. .NET's DateTimeOffset.TryParse без указания зоны молча предлагает локальную
+        if (type == typeof(DateTime))
+        {
+            if (HasExplicitOffset(raw))
+            {
+                if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
+                                            DateTimeStyles.None, out var dto))
+                    return dto.UtcDateTime;   // DateTimeKind.Utc
+            }
+            else
+            {
+                if (DateTime.TryParse(raw, CultureInfo.InvariantCulture,
+                                      DateTimeStyles.None, out var dt))
+                    return DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+            }
+        }
 
         if (type == typeof(DateOnly)
             && DateOnly.TryParse(raw, CultureInfo.InvariantCulture,
@@ -214,12 +227,37 @@ public static partial class XmlaParser
                                  DateTimeStyles.None, out var timeVal))
             return timeVal;
 
-        return raw;
+        // Вызов происходит только в том случае, если значение не удалось преобразовать в объявленный тип.
+        // Использование исключения в данном случае позволяет избежать скрытой записи строки в числовой столбец.
+        throw new InvalidOperationException(
+            $"Failed to parse value '{raw}' in column '{column.Name}' " +
+            $"as {type.Name}. The value exceeds the declared XSD type " +
+            $"or has an unexpected format.");
     }
 
     /// <summary>
-    /// Декодирует XML-имена вида "_x005B_" в символы
-    /// Согласно спецификации XSD, символы, недопустимые в XML-именах, заменяются на "_xXXXX_", где XXXX — Unicode-код в hex.
+    /// True если XSD dateTime содержит смещение часового пояса
+    /// ("Z" или "+HH:MM" / "-HH:MM").
+    /// </summary>
+    private static bool HasExplicitOffset(string s)
+    {
+        if (s.Length == 0) return false;
+        if (s[^1] == 'Z' || s[^1] == 'z') return true;
+
+        var tIndex = s.IndexOf('T');
+        if (tIndex < 0) return false;
+
+        for (int i = tIndex + 1; i < s.Length; i++)
+        {
+            if (s[i] == '+' || s[i] == '-') return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Декодирует XML-имена вида "_x005B_" в символы.
+    /// Согласно спецификации XSD, символы, недопустимые в XML-именах,
+    /// заменяются на "_xXXXX_", где XXXX — Unicode-код в hex.
     /// </summary>
     private static string DecodeXmlName(string name)
     {
