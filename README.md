@@ -26,7 +26,7 @@ incompatible with .NET Native AOT. This extension takes a different approach:
 
 - **Cross-platform by design.** Uses ADOMD.NET (or, on Linux, XMLA over HTTP)
   instead of OLEDB.
-- **Single-file native binary.** No .NET Runtime required at runtime.
+- **Native AOT, no .NET Runtime required.** The extension is a self-contained native binary. A small number of MSAL native libraries ship alongside it (see [Installation](#installation)).
 - **Dynamic schema.** Result columns are determined at query time from the
   server's response — same as any SQL table function.
 
@@ -42,10 +42,10 @@ Grab the latest release for Windows x64:
 
 Each release contains a single ZIP archive (Windows):
 
-- `olap.duckdb_extension` — the extension binary
-- `DuckDB.OlapExtension.dll` — managed assembly
+- `olap.duckdb_extension` — the DuckDB extension binary
+- `DuckDB.OlapExtension.dll` — the raw native library, same code as above
 - `msalruntime.dll` — MSAL native dependency
-- `msasxpress.dll` — MSAL compression dependency
+- `msasxpress.dll` — MSAL compression native dependency
 
 Extract the archive into a folder of your choice, then jump to [Installation](#installation).
 
@@ -67,14 +67,13 @@ Extract the archive into a folder of your choice, then jump to [Installation](#i
     stored anywhere. Fully tested.
   - **Linux** — XMLA-over-HTTP with either Kerberos (`Negotiate`) or Basic
     auth. See [Connection strings](#connection-strings).
-- **Diagnostics function.** `olap_test_conn()` verifies that ADOMD works in
-  the current environment.
+- **Diagnostics function.** `olap_test_conn()` creates an `AdomdConnection` object without opening it. Useful for verifying that ADOMD.NET loads correctly in the current environment, but does **not** test connectivity or authentication.
 
 ## Requirements
 
 ### To use a prebuilt release
 
-- **DuckDB** v1.5.5 or later.
+- **DuckDB v1.5.5** (exact version). The extension uses the `C_STRUCT_UNSTABLE` ABI, which is tied to a specific DuckDB release. Other DuckDB versions may refuse to load the extension.
 - **Analysis Services instance** — SSAS (on-premises), Azure Analysis Services,
   or Power BI Premium.
 
@@ -184,7 +183,7 @@ result as a DuckDB table with dynamically determined columns.
 ```sql
 -- Query to OLAP
 SELECT * FROM query_olap(
-    'Data Source=localhost;Initial Catalog=qOLAP;Integrated Security=SSPI;',
+    'Data Source=localhost;Initial Catalog=OLAP;Integrated Security=SSPI;',
     'EVALUATE VALUES(''DataSources''[Code])'
 );
 ```
@@ -218,15 +217,17 @@ SELECT olap_test_conn('Data Source=dummy;');
 Data Source=localhost;Initial Catalog=OLAP;Integrated Security=SSPI;
 ```
 
-**Linux — HTTP via IIS (`msmdpump.dll`), Basic auth:**
+**Linux — HTTPS via IIS (`msmdpump.dll`), Basic auth:**
 ```
-Data Source=http://server/olap/msmdpump.dll;Initial Catalog=OLAP;User ID=user;Password=pass;
+Data Source=https://server/olap/msmdpump.dll;Initial Catalog=OLAP;User ID=user;Password=pass;
 ```
 
-**Linux — HTTP via IIS (`msmdpump.dll`), Kerberos:**
+**Linux — HTTPS via IIS (`msmdpump.dll`), Kerberos:**
 ```
-Data Source=http://server/olap/msmdpump.dll;Initial Catalog=OLAP;Integrated Security=Negotiate;
+Data Source=https://server/olap/msmdpump.dll;Initial Catalog=OLAP;Integrated Security=Negotiate;
 ```
+
+> **⚠️ Use HTTPS, not HTTP.** Basic authentication sends the password in cleartext. Microsoft recommends HTTPS for MSMDPUMP in production.
 
 **Azure Analysis Services:**
 ```
@@ -261,6 +262,7 @@ the [XMLA specification](https://learn.microsoft.com/en-us/analysis-services/xml
 - **Linux via HTTP only.** TCP connections to Analysis Services are
   Windows-only. On Linux, an XMLA-over-HTTP endpoint (`msmdpump.dll` in IIS)
   is required.
+- **Full result set is buffered in memory.** `OlapTableFunction.Fetch` runs during `Bind`, so the entire DAX result is loaded into memory before DuckDB starts processing. An outer `LIMIT` does **not** reduce memory or transfer. Suitable for small and medium result sets, not for large exports.
 
 ## Development
 
