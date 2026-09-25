@@ -5,7 +5,7 @@
 [![Build Linux](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](#platform-support)
-[![DuckDB](https://img.shields.io/badge/DuckDB-v1.5.5-000000?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJjdXJyZW50Q29sb3IiIGQ9Ik0xMiAwQzUuMzYzIDAgMCA1LjM2MyAwIDEyczUuMzYzIDEyIDEyIDEyIDEyLTUuMzYzIDEyLTEyUzE4LjYzNyAwIDEyIDB6TTkuNTAyIDcuMDNhNC45NzQgNC45NzQgMCAwMTQuOTcgNC45NyA0Ljk3NCA0Ljk3NCAwIDAxLTQuOTcgNC45N0E0Ljk3NCA0Ljk3NCAwIDAxNC41MzIgMTJhNC45NzQgNC45NzQgMCAwMTQuOTctNC45N3ptNi41NjMgMy4xODNoMi4zNTFjLjk4IDAgMS43ODcuNzgyIDEuNzg3IDEuNzYycy0uODA3IDEuNzg5LTEuNzg3IDEuNzg5aC0yLjM1MXYtMy41NTF6Ii8+PC9zdmc+&labelColor=FCC624&logoColor=000000)](https://github.com/duckdb/duckdb/releases/tag/v1.5.5)
+[![DuckDB](https://img.shields.io/badge/DuckDB-v1.5.5-000000?logo=duckdb&labelColor=FCC624&logoColor=000000)](https://github.com/duckdb/duckdb/releases/tag/v1.5.5)
 
 A DuckDB extension that connects to Microsoft Analysis Services (SSAS, Azure Analysis Services, Power BI Premium) and executes DAX queries directly from SQL. Written in C#, compiled to a native binary via .NET Native AOT.
 
