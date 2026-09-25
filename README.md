@@ -1,11 +1,11 @@
 # DuckDB.OlapExtension
 
 [![Release](https://img.shields.io/github/v/release/Ximrl/DuckDB.OlapExtension?sort=semver)](https://github.com/Ximrl/DuckDB.OlapExtension/releases/latest)
+[![DuckDB](https://img.shields.io/badge/DuckDB-v1.5.5-000000?logo=duckdb&labelColor=FCC624&logoColor=000000)](https://github.com/duckdb/duckdb/releases/tag/v1.5.5)
 [![Build Windows](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-windows.yml)
 [![Build Linux](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Ximrl/DuckDB.OlapExtension/actions/workflows/build-linux.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue.svg)](#platform-support)
-[![DuckDB](https://img.shields.io/badge/DuckDB-v1.5.5-000000?logo=duckdb&labelColor=FCC624&logoColor=000000)](https://github.com/duckdb/duckdb/releases/tag/v1.5.5)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A DuckDB extension that connects to Microsoft Analysis Services (SSAS, Azure Analysis Services, Power BI Premium) and executes DAX queries directly from SQL. Written in C#, compiled to a native binary via .NET Native AOT.
 
@@ -254,14 +254,15 @@ the [XMLA specification](https://learn.microsoft.com/en-us/analysis-services/xml
 - **DAX only (for now).** The current parser handles the `rowset` response
   format used by DAX queries against tabular models. MDX queries against
   multidimensional cubes (which return `mddataset`) are not yet supported.
-- **External native DLLs.** On Windows, the extension requires
-  `msalruntime.dll` and `msasxpress.dll`, which come from the ADOMD.NET NuGet
-  package. These must be shipped alongside the extension.
+- **External native libraries required.**
+  - **Windows:** `msalruntime.dll`, `msasxpress.dll` (both from the ADOMD.NET NuGet package).
+  - **Linux:** `libmsalruntime.so` (same package).
+  Must ship alongside the extension.
 - **No pushdown.** Filters in the outer SQL query are not translated to DAX.
   All filtering happens after the full result set is returned from the server.
-- **Linux via HTTP only.** TCP connections to Analysis Services are
-  Windows-only. On Linux, an XMLA-over-HTTP endpoint (`msmdpump.dll` in IIS)
-  is required.
+- **Linux requires XMLA over HTTP(S).** TCP connections to Analysis Services
+  are Windows-only. On Linux, an XMLA-over-HTTP(S) endpoint (`msmdpump.dll`
+  in IIS) is required. HTTPS is strongly recommended (see [Connection strings](#connection-strings)).
 - **Full result set is buffered in memory.** `OlapTableFunction.Fetch` runs during `Bind`, so the entire DAX result is loaded into memory before DuckDB starts processing. An outer `LIMIT` does **not** reduce memory or transfer. Suitable for small and medium result sets, not for large exports.
 
 ## Development
