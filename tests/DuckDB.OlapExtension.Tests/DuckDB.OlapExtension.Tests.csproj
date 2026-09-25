@@ -18,4 +18,8 @@
     <ProjectReference Include="..\..\DuckDB.OlapExtension.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
 </Project>
