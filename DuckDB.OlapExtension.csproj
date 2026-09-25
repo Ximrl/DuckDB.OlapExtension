@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <ExtensionName>olap</ExtensionName>
-    <ExtensionVersion>v1.0.1</ExtensionVersion>
+    <ExtensionVersion>v1.1.0</ExtensionVersion>
     <UseUnstableApi>true</UseUnstableApi>
   </PropertyGroup>
 
